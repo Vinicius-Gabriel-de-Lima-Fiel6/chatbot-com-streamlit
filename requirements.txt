@@ -1,4 +1,3 @@
-streamlit==1.31.0
-groq==0.4.2
-streamlit-mic-recorder==0.0.20
-PyPDF2==3.0.1
+groq
+streamlit-mic-recorder
+PyPDF2

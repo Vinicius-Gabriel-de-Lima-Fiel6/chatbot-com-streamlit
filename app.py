@@ -4,132 +4,139 @@ from streamlit_mic_recorder import mic_recorder
 import io
 import PyPDF2
 import base64
+from gtts import gTTS # Biblioteca de voz gratuita
+import urllib.parse
 
 # Configuração da Página
-st.set_page_config(page_title="Llama 3.3 Versatile", layout="centered")
+st.set_page_config(page_title="Llama 3.3 Ultra Free", layout="centered", page_icon="🤖")
 
-# --- INICIALIZAÇÃO DE ESTADOS ---
+# --- INICIALIZAÇÃO ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "mic_key" not in st.session_state:
     st.session_state.mic_key = 0
 
-# --- CONEXÃO COM A GROQ ---
 try:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception as e:
-    st.error("Erro nos Secrets: Certifique-se de que GROQ_API_KEY está configurada.")
+    st.error("Configure a GROQ_API_KEY nos Secrets do Streamlit.")
     st.stop()
 
-# Função para processar imagem
+# Função para codificar imagem local para o Llama Vision
 def encode_image(image_file):
     return base64.b64encode(image_file.read()).decode('utf-8')
 
-st.title("🎙️ Assistente Pessoal Llama")
-st.caption("Texto, Voz, Fotos e PDFs - Tudo em um só lugar")
+# Função de Voz Gratuita (gTTS)
+def speak_text(text):
+    try:
+        tts = gTTS(text=text, lang='pt', tld='com.br')
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        return fp
+    except Exception as e:
+        return None
 
-# --- BARRA LATERAL ---
+# --- UI ---
+st.title("🤖 Llama 3.3: O Sistema Completo")
+st.caption("Texto, Voz, Visão e Geração de Imagens (Sem OpenAI)")
+
 with st.sidebar:
-    st.header("Configurações e Arquivos")
-    uploaded_file = st.file_uploader("Anexar foto ou PDF", type=["png", "jpg", "jpeg", "pdf"])
-    if st.button("Limpar Histórico"):
+    st.header("⚙️ Opções")
+    uploaded_file = st.file_uploader("Subir Foto ou PDF", type=["png", "jpg", "jpeg", "pdf"])
+    ativar_voz = st.checkbox("Ouvir resposta", value=True)
+    if st.button("Limpar Chat"):
         st.session_state.messages = []
-        st.session_state.mic_key += 1 # Reseta o microfone também
+        st.session_state.mic_key += 1
         st.rerun()
 
-# --- COMPONENTE DE ÁUDIO (MICROFONE) ---
-st.write("Fale com o assistente:")
-# Usamos uma chave dinâmica (mic_key) para evitar que o Streamlit trave o componente
+# --- ENTRADA DE VOZ ---
+st.write("Fale ou digite:")
 audio_output = mic_recorder(
-    start_prompt="🎤 Iniciar Gravação",
-    stop_prompt="⏹️ Parar e Enviar",
-    just_once=True,
-    key=f"mic_recorder_{st.session_state.mic_key}"
+    start_prompt="🎤 Falar", stop_prompt="⏹️ Enviar", 
+    just_once=True, key=f"mic_{st.session_state.mic_key}"
 )
 
-# --- LÓGICA DE ENTRADA ---
-user_prompt = st.chat_input("Ou digite sua mensagem aqui...")
+prompt = st.chat_input("Como posso ajudar?")
 
-# Processar Áudio se houver
+# Processar áudio do microfone
 if audio_output and 'bytes' in audio_output:
-    with st.spinner("Transcrevendo sua voz..."):
-        try:
-            audio_file = io.BytesIO(audio_output['bytes'])
-            audio_file.name = "audio.wav"
-            transcription = client.audio.transcriptions.create(
-                file=(audio_file.name, audio_file.read()),
-                model="whisper-large-v3",
-                response_format="text"
-            )
-            user_prompt = transcription
-            # Incrementa a chave para o microfone resetar na próxima interação
-            st.session_state.mic_key += 1
-        except Exception as e:
-            st.error(f"Erro no Whisper: {e}")
+    with st.spinner("Traduzindo voz..."):
+        audio_file = io.BytesIO(audio_output['bytes'])
+        audio_file.name = "audio.wav"
+        transcription = client.audio.transcriptions.create(
+            file=(audio_file.name, audio_file.read()),
+            model="whisper-large-v3", response_format="text"
+        )
+        prompt = transcription
+        st.session_state.mic_key += 1
 
-# --- PROCESSAMENTO DO CHAT ---
-if user_prompt:
-    # 1. Adiciona pergunta ao histórico
-    st.session_state.messages.append({"role": "user", "content": user_prompt})
+# --- FLUXO PRINCIPAL ---
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
     
-    # 2. Exibe o chat atualizado
+    # Exibir histórico
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # 3. Gera Resposta do Llama
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_response = ""
 
-        try:
-            # CASO A: IMAGEM (Vision)
-            if uploaded_file and uploaded_file.type.startswith("image"):
-                b64_img = encode_image(uploaded_file)
-                response = client.chat.completions.create(
-                    model="llama-3.2-11b-vision-preview",
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": user_prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}}
-                        ]
-                    }]
-                )
-                full_response = response.choices[0].message.content
-                placeholder.markdown(full_response)
-
-            # CASO B: TEXTO / PDF / VOZ (Llama 3.3 Versatile)
-            else:
-                contexto_pdf = ""
-                if uploaded_file and uploaded_file.type == "application/pdf":
-                    pdf_reader = PyPDF2.PdfReader(uploaded_file)
-                    contexto_pdf = "CONTEXTO DO PDF: " + "".join([p.extract_text() for p in pdf_reader.pages[:3]])
-
-                stream = client.chat.completions.create(
+        # 1. VERIFICAR SE O USUÁRIO QUER UMA IMAGEM
+        pavras_chave_imagem = ["crie uma imagem", "gere uma foto", "desenhe", "faça uma imagem"]
+        if any(keyword in prompt.lower() for keyword in pavras_chave_imagem):
+            with st.spinner("Desenhando..."):
+                # Criar um prompt de imagem otimizado usando Llama
+                res = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=[
-                        {"role": "system", "content": "Você é um assistente prestativo. Seja direto e amigável."},
-                        {"role": "system", "content": contexto_pdf}
-                    ] + st.session_state.messages,
-                    stream=True
+                    messages=[{"role": "user", "content": f"Transforme isso em um prompt de imagem em inglês: {prompt}"}]
                 )
-                for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        full_response += chunk.choices[0].delta.content
-                        placeholder.markdown(full_response + "▌")
+                eng_prompt = urllib.parse.quote(res.choices[0].message.content)
+                img_url = f"https://pollinations.ai/p/{eng_prompt}?width=1024&height=1024&seed=42&model=flux"
+                
+                st.image(img_url, caption="Imagem gerada pelo Pollinations/Flux")
+                full_response = "Aqui está a imagem que criei para você!"
                 placeholder.markdown(full_response)
+        
+        # 2. SE HOUVER IMAGEM SUBIDA (VISION)
+        elif uploaded_file and uploaded_file.type.startswith("image"):
+            b64_img = encode_image(uploaded_file)
+            res = client.chat.completions.create(
+                model="llama-3.2-11b-vision-preview",
+                messages=[{"role": "user", "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}}
+                ]}]
+            )
+            full_response = res.choices[0].message.content
+            placeholder.markdown(full_response)
 
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            # Força o reset do microfone para a próxima fala
-            if audio_output:
-                st.rerun()
+        # 3. CHAT DE TEXTO NORMAL / PDF
+        else:
+            contexto_pdf = ""
+            if uploaded_file and "pdf" in uploaded_file.type:
+                pdf_reader = PyPDF2.PdfReader(uploaded_file)
+                contexto_pdf = "Contexto do PDF: " + "".join([p.extract_text() for p in pdf_reader.pages[:3]])
 
-        except Exception as e:
-            st.error(f"Erro ao processar: {e}")
+            stream = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "system", "content": f"Você é um assistente completo. {contexto_pdf}"}] + st.session_state.messages,
+                stream=True
+            )
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    full_response += chunk.choices[0].delta.content
+                    placeholder.markdown(full_response + "▌")
+            placeholder.markdown(full_response)
 
-elif not user_prompt and st.session_state.messages:
-    # Apenas exibe as mensagens se não houver novo prompt
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        
+        # Falar a resposta (TTS Gratuito)
+        if ativar_voz:
+            audio_fp = speak_text(full_response)
+            if audio_fp:
+                st.audio(audio_fp, format="audio/mp3")
+        
+        if audio_output:
+            st.rerun()

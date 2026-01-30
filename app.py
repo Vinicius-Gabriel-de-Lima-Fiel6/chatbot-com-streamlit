@@ -1,165 +1,163 @@
 import streamlit as st
 from groq import Groq
 from streamlit_mic_recorder import mic_recorder
-import io, PyPDF2, base64, urllib.parse, datetime
+import io, PyPDF2, base64, urllib.parse
 from gtts import gTTS
-from duckduckgo_search import DDGS # Para funcionalidade de pesquisa real
+from duckduckgo_search import DDGS
 
-# --- CONFIGURAÇÃO DE ALTA PERFORMANCE ---
-st.set_page_config(page_title="Llama OS - Ultimate", layout="wide", page_icon="🧬")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Llama 3.3 Ultimate OS", layout="wide", page_icon="🧬")
 
-# --- SISTEMA DE MEMÓRIA E PROJETOS ---
+# --- GERENCIAMENTO DE MEMÓRIA E PROJETOS ---
 if "projects" not in st.session_state:
-    st.session_state.projects = {"Projeto Inicial": []}
-if "current_project" not in st.session_state:
-    st.session_state.current_project = "Projeto Inicial"
+    st.session_state.projects = {"Conversa Inicial": []}
+if "active_project" not in st.session_state:
+    st.session_state.active_project = "Conversa Inicial"
 if "mic_key" not in st.session_state:
     st.session_state.mic_key = 0
-if "settings" not in st.session_state:
-    st.session_state.settings = {
-        "voice": True, 
-        "simultaneous": False, 
-        "model": "llama-3.3-70b-versatile",
-        "creativity": 0.7
-    }
 
-# Conexão Groq
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# --- FUNÇÕES CORE ---
-def play_audio_auto(text):
-    tts = gTTS(text=text, lang='pt', tld='com.br')
-    fp = io.BytesIO()
-    tts.write_to_fp(fp)
-    fp.seek(0)
-    audio_b64 = base64.b64encode(fp.read()).decode("utf-8")
-    st.markdown(f'<audio autoplay><source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
+# --- PRE-PROMPTS (O SEGREDO DO SUCESSO) ---
+PRE_PROMPT_MESTRE = """
+VOCÊ É O LLAMA 3.3 ULTIMATE. VOCÊ NÃO É APENAS UM MODELO DE TEXTO.
+DIRETRIZES OBRIGATÓRIAS:
+1. IMAGENS: Você TEM a habilidade de gerar imagens. Quando o usuário pedir para criar/gerar/desenhar, descreva o que vai fazer e confirme que a imagem será exibida. 
+2. VISÃO: Você consegue analisar fotos e PDFs anexados. Use os dados dos anexos para responder.
+3. PESQUISA: Você tem acesso a resultados de pesquisa web em tempo real fornecidos pelo sistema.
+4. ESTILO: Seja direto, inteligente e nunca diga "não posso". Você é um sistema integrado.
+"""
 
-def web_search(query):
-    with DDGS() as ddgs:
-        results = [r['body'] for r in ddgs.text(query, max_results=3)]
-        return "\n".join(results)
+# --- FUNÇÕES AUXILIARES ---
+def play_audio(text):
+    try:
+        tts = gTTS(text=text, lang='pt', tld='com.br')
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        fp.seek(0)
+        b64 = base64.b64encode(fp.read()).decode("utf-8")
+        st.markdown(f'<audio autoplay><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
+    except: pass
 
-# --- SIDEBAR: GESTOR DE PROJETOS E MEMÓRIA ---
+def search_web(query):
+    try:
+        with DDGS() as ddgs:
+            results = [r['body'] for r in ddgs.text(query, max_results=3)]
+            return "\n".join(results)
+    except: return "Não foi possível acessar a web agora."
+
+# --- INTERFACE LATERAL (PASTAS E CONFIGS) ---
 with st.sidebar:
-    st.title("🧬 Llama OS")
+    st.title("📂 Workspace")
     
-    # 1. Gestão de Projetos
-    st.subheader("📁 Meus Projetos")
-    new_p = st.text_input("Novo Projeto:", placeholder="Nome do projeto...")
-    if st.button("➕ Criar"):
-        if new_p: 
+    # Criar Novo Projeto
+    new_p = st.text_input("Novo Projeto/Pasta:", placeholder="Ex: Estudo de IA")
+    if st.button("➕ Criar Nova Pasta"):
+        if new_p:
             st.session_state.projects[new_p] = []
-            st.session_state.current_project = new_p
+            st.session_state.active_project = new_p
             st.rerun()
 
-    project_list = list(st.session_state.projects.keys())
-    st.session_state.current_project = st.selectbox("Pasta Ativa:", project_list, index=project_list.index(st.session_state.current_project))
+    # Seletor de Pastas
+    opcoes = list(st.session_state.projects.keys())
+    st.session_state.active_project = st.selectbox("Pasta Ativa:", opcoes, index=opcoes.index(st.session_state.active_project))
     
-    # 2. Galeria de Imagens Geradas (Memória Visual)
-    with st.expander("🖼️ Galeria do Projeto"):
-        imgs = [m['content'] for m in st.session_state.projects[st.session_state.current_project] if "http" in m['content'] and ".ai" in m['content']]
-        if imgs:
-            for img_url in imgs: st.image(img_url)
-        else: st.write("Nenhuma imagem gerada.")
+    st.divider()
+    st.header("⚙️ Ferramentas")
+    modo_voz = st.toggle("🎙️ Conversa Simultânea (Voz)", value=True)
+    pesquisa_on = st.toggle("🔍 Pesquisa Web Ativa", value=False)
+    arquivo = st.file_uploader("Subir PDF ou Foto", type=["pdf", "png", "jpg"])
+    
+    if st.button("🗑️ Limpar Pasta Atual"):
+        st.session_state.projects[st.session_state.active_project] = []
+        st.rerun()
 
-    # 3. Configurações Criativas
-    with st.expander("⚙️ Configurações"):
-        st.session_state.settings["simultaneous"] = st.toggle("Modo Simultâneo (Voz)", value=st.session_state.settings["simultaneous"])
-        st.session_state.settings["voice"] = st.toggle("Ouvir Respostas", value=st.session_state.settings["voice"])
-        st.session_state.settings["creativity"] = st.slider("Criatividade (Temperature)", 0.0, 1.0, 0.7)
-        if st.button("🗑️ Resetar Projeto Atual"):
-            st.session_state.projects[st.session_state.current_project] = []
-            st.rerun()
+# --- ÁREA DE CONVERSA ---
+st.title(f"📍 {st.session_state.active_project}")
 
-# --- INTERFACE DE CHAT ---
-st.title(f"📂 {st.session_state.current_project}")
-
-# Layout de Input
-col_mic, col_file, col_txt = st.columns([1, 1, 6])
-with col_mic:
+# Layout de Entrada (Voz e Texto)
+col_audio, col_txt = st.columns([1, 8])
+with col_audio:
     audio_data = mic_recorder(start_prompt="🎤", stop_prompt="⏹️", key=f"mic_{st.session_state.mic_key}")
-with col_file:
-    uploaded_file = st.file_uploader("📎", type=["png", "jpg", "pdf"], label_visibility="collapsed")
 
-user_input = st.chat_input("Perquise, crie, fale ou analise...")
+prompt = st.chat_input("Peça uma imagem, pesquise na web ou envie um arquivo...")
 
-# Lógica de Transcrição
+# Processar Voz
 if audio_data and 'bytes' in audio_data:
-    with st.spinner("👂 Ouvindo..."):
+    with st.spinner("🎙️ Traduzindo fala..."):
         audio_file = io.BytesIO(audio_data['bytes'])
-        audio_file.name = "input.wav"
-        user_input = client.audio.transcriptions.create(file=(audio_file.name, audio_file.read()), model="whisper-large-v3", response_format="text")
+        audio_file.name = "audio.wav"
+        prompt = client.audio.transcriptions.create(file=(audio_file.name, audio_file.read()), model="whisper-large-v3", response_format="text")
         st.session_state.mic_key += 1
 
-# --- CÉREBRO PROCESSADOR ---
-if user_input:
-    # Registrar na Memória do Projeto
-    st.session_state.projects[st.session_state.current_project].append({"role": "user", "content": user_input})
+# --- PROCESSAMENTO INTELIGENTE ---
+if prompt:
+    # 1. Adiciona à Memória da Pasta
+    st.session_state.projects[st.session_state.active_project].append({"role": "user", "content": prompt})
     
-    # Exibir Histórico
-    for msg in st.session_state.projects[st.session_state.current_project]:
-        with st.chat_message(msg["role"]):
-            if "http" in msg['content'] and ".ai" in msg['content']: st.image(msg['content'])
-            else: st.markdown(msg["content"])
+    # Mostrar histórico da pasta
+    for m in st.session_state.projects[st.session_state.active_project]:
+        with st.chat_message(m["role"]):
+            if "### [IMAGE_URL]" in m["content"]:
+                st.image(m["content"].split("]")[1])
+            else:
+                st.markdown(m["content"])
 
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_res = ""
-        
-        # A. PESQUISA WEB REAL
-        if "pesquise" in user_input.lower() or "search" in user_input.lower():
-            placeholder.markdown("🔍 Vasculhando a internet...")
-            search_context = web_search(user_input)
-            user_input = f"CONTEXTO WEB: {search_context}\n\nPERGUNTA: {user_input}"
+        contexto_adicional = ""
 
-        # B. GERAÇÃO DE IMAGEM
-        img_triggers = ["crie uma imagem", "gere uma foto", "desenhe", "faça uma imagem"]
-        if any(t in user_input.lower() for t in img_triggers):
-            placeholder.markdown("🎨 Pintando sua ideia...")
-            # Usa Llama para melhorar o prompt
-            res_p = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": f"Descreva em inglês para um gerador de imagens: {user_input}"}])
-            desc = urllib.parse.quote(res_p.choices[0].message.content.strip())
-            img_url = f"https://image.pollinations.ai/prompt/{desc}?width=1024&height=1024&model=flux"
+        # A. INTERCEPTAR PEDIDO DE IMAGEM
+        img_triggers = ["crie", "gere", "desenhe", "foto", "imagem"]
+        if any(word in prompt.lower() for word in img_triggers):
+            placeholder.markdown("🎨 **O Llama está a desenhar a sua ideia...**")
+            eng_prompt = urllib.parse.quote(prompt)
+            img_url = f"https://image.pollinations.ai/prompt/{eng_prompt}?width=1024&height=1024&model=flux"
             st.image(img_url)
-            full_res = img_url # Salva o link na memória para a galeria
-            placeholder.markdown("Pronto! Salvei na galeria do seu projeto.")
+            full_res = f"### [IMAGE_URL]{img_url}"
+        
+        # B. PESQUISA WEB
+        elif pesquisa_on:
+            placeholder.markdown("🔍 **A aceder à rede mundial de computadores...**")
+            web_data = search_web(prompt)
+            contexto_adicional = f"\n[DADOS DA WEB]: {web_data}"
 
-        # C. VISÃO OU PDF
-        elif uploaded_file:
-            if uploaded_file.type.startswith("image"):
-                b64 = base64.b64encode(uploaded_file.read()).decode('utf-8')
-                res = client.chat.completions.create(model="llama-3.2-11b-vision-preview", messages=[{"role": "user", "content": [{"type":"text","text":user_input},{"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{b64}"}}]}])
+        # C. PDF OU VISÃO
+        if not full_res:
+            if arquivo and arquivo.type.startswith("image"):
+                b64 = base64.b64encode(arquivo.read()).decode('utf-8')
+                res = client.chat.completions.create(
+                    model="llama-3.2-11b-vision-preview",
+                    messages=[{"role": "user", "content": [{"type":"text","text":prompt}, {"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{b64}"}}]}]
+                )
                 full_res = res.choices[0].message.content
             else:
-                pdf_r = PyPDF2.PdfReader(uploaded_file)
-                txt = "".join([p.extract_text() for p in pdf_r.pages[:3]])
-                user_input = f"CONTEXTO PDF: {txt}\n\nPERGUNTA: {user_input}"
+                if arquivo and "pdf" in arquivo.type:
+                    pdf_reader = PyPDF2.PdfReader(arquivo)
+                    contexto_adicional += "\n[TEXTO DO PDF]: " + "".join([p.extract_text() for p in pdf_reader.pages[:3]])
 
-        # D. RESPOSTA DE TEXTO (Com Memória do Projeto)
-        if not full_res:
-            stream = client.chat.completions.create(
-                model=st.session_state.settings["model"],
-                temperature=st.session_state.settings["creativity"],
-                messages=[{"role": "system", "content": f"Você está no projeto: {st.session_state.current_project}. Seja breve se o modo simultâneo estiver on."}] + st.session_state.projects[st.session_state.current_project],
-                stream=True
-            )
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    full_res += chunk.choices[0].delta.content
-                    placeholder.markdown(full_res + "▌")
+                # CHAMADA PRINCIPAL COM PRE-PROMPT
+                stream = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": PRE_PROMPT_MESTRE + contexto_adicional}
+                    ] + st.session_state.projects[st.session_state.active_project],
+                    stream=True
+                )
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        full_res += chunk.choices[0].delta.content
+                        placeholder.markdown(full_res + "▌")
             placeholder.markdown(full_res)
 
-        # SALVAR E FALAR
-        st.session_state.projects[st.session_state.current_project].append({"role": "assistant", "content": full_res})
-        if st.session_state.settings["voice"] or st.session_state.settings["simultaneous"]:
-            play_audio_auto(full_res)
+        # SALVAR E EXECUTAR VOZ
+        st.session_state.projects[st.session_state.active_project].append({"role": "assistant", "content": full_res})
         
-        if audio_data: st.rerun()
-
-# Se não houver input, mostra o histórico
-elif st.session_state.projects[st.session_state.current_project]:
-    for msg in st.session_state.projects[st.session_state.current_project]:
-        with st.chat_message(msg["role"]):
-            if "http" in msg['content'] and ".ai" in msg['content']: st.image(msg['content'])
-            else: st.markdown(msg["content"])
+        if modo_voz:
+            # Remove a tag de imagem do texto antes de ler
+            clean_text = full_res.replace("### [IMAGE_URL]", "Aqui está a sua imagem.")
+            play_audio(clean_text)
+        
+        if audio_data:
+            st.rerun()

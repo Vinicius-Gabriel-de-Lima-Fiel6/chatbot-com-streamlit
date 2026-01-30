@@ -1,4 +1,4 @@
-streamlit
+streamlit==1.31.0
 groq
-streamlit-mic-recorder
+streamlit-mic-recorder==0.0.20
 PyPDF2

@@ -2,4 +2,4 @@ streamlit
 groq
 streamlit-mic-recorder
 PyPDF2
-openai
+gTTS

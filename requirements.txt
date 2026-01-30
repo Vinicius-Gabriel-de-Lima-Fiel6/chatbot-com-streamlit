@@ -3,3 +3,4 @@ groq
 streamlit-mic-recorder
 PyPDF2
 gTTS
+duckduckgo-search

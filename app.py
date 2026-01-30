@@ -10,7 +10,7 @@ st.title("🤖 Llama 3.3 Versatile Chat")
 
 # --- Configurações da Groq ---
 # Recomenda-se colocar a chave no secrets.toml do Streamlit ou .env
-client = Groq(api_key="SUA_CHAVE_AQUI")
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 # Inicializar histórico do chat
 if "messages" not in st.session_state:

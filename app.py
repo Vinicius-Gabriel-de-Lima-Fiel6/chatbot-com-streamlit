@@ -2,111 +2,144 @@ import streamlit as st
 from groq import Groq
 from streamlit_mic_recorder import mic_recorder
 import io
+import PyPDF2
 import base64
 from gtts import gTTS
+import urllib.parse
 
-# --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Llama Voice Live", layout="centered", page_icon="🎙️")
+# --- CONFIGURAÇÃO DE PÁGINA ---
+st.set_page_config(page_title="Llama 3.3 Versatile Ultra", layout="wide", page_icon="🚀")
 
-# Inicialização de estados
+# Inicialização de Estados
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "hands_free" not in st.session_state:
-    st.session_state.hands_free = False
 if "mic_key" not in st.session_state:
     st.session_state.mic_key = 0
 
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+# Cliente Groq
+try:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+except:
+    st.error("Configure sua GROQ_API_KEY nos Secrets!")
+    st.stop()
 
-def play_audio_auto(text):
-    """Gera áudio e força o autoplay via HTML/Base64."""
+# --- FUNÇÕES CORE ---
+def play_audio(text):
     tts = gTTS(text=text, lang='pt', tld='com.br')
     fp = io.BytesIO()
     tts.write_to_fp(fp)
     fp.seek(0)
-    audio_base64 = base64.b64encode(fp.read()).decode("utf-8")
-    audio_html = f'<audio autoplay><source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3"></audio>'
+    audio_b64 = base64.b64encode(fp.read()).decode("utf-8")
+    audio_html = f'<audio autoplay><source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3"></audio>'
     st.markdown(audio_html, unsafe_allow_html=True)
 
-# --- INTERFACE ---
+def encode_img(file):
+    return base64.b64encode(file.read()).decode('utf-8')
+
+# --- INTERFACE LATERAL (UPLOAD E MODOS) ---
 with st.sidebar:
-    st.title("Settings")
-    # BOTÃO PARA ENTRAR NO MODO SIMULTÂNEO
-    st.session_state.hands_free = st.toggle("Ativar Modo Simultâneo (Voz)", value=st.session_state.hands_free)
-    if st.button("Limpar Histórico"):
+    st.title("🎛️ Painel de Controle")
+    modo_voz = st.toggle("🎙️ Conversa Simultânea (Voz)", value=True)
+    st.divider()
+    
+    st.subheader("📁 Anexos")
+    arquivo = st.file_uploader("Foto ou PDF", type=["png", "jpg", "jpeg", "pdf"])
+    
+    if st.button("🗑️ Limpar Conversa"):
         st.session_state.messages = []
         st.rerun()
 
-if st.session_state.hands_free:
-    st.subheader("🟢 Modo Conversa Simultânea Ativo")
-    st.info("Neste modo, o assistente será breve e lerá todas as respostas automaticamente.")
-else:
-    st.title("🤖 Llama 3.3 Versatile")
+# --- ÁREA DE INPUT ---
+st.title("🚀 Llama 3.3 Multimodal")
 
-# --- COMPONENTE DE VOZ ---
-st.write("Toque para falar:")
-audio_output = mic_recorder(
-    start_prompt="🎤 FALAR", 
-    stop_prompt="⏹️ ENVIAR",
-    just_once=True,
-    key=f"mic_{st.session_state.mic_key}"
-)
+col_mic, col_input = st.columns([1, 5])
+with col_mic:
+    audio_in = mic_recorder(
+        start_prompt="🎤", stop_prompt="⏹️", 
+        just_once=True, key=f"mic_{st.session_state.mic_key}"
+    )
 
-# Entrada de texto (fica oculta ou secundária no modo hands-free)
-user_prompt = st.chat_input("Ou digite aqui...")
+prompt_texto = st.chat_input("Pergunte algo, peça uma imagem ou analise um arquivo...")
 
-# Lógica de Transcrição
-if audio_output and 'bytes' in audio_output:
+# Processar entrada (Voz ou Texto)
+user_input = prompt_texto
+if audio_in and 'bytes' in audio_in:
     with st.spinner("Ouvindo..."):
-        audio_file = io.BytesIO(audio_output['bytes'])
-        audio_file.name = "audio.wav"
-        transcription = client.audio.transcriptions.create(
+        audio_file = io.BytesIO(audio_in['bytes'])
+        audio_file.name = "input.wav"
+        user_input = client.audio.transcriptions.create(
             file=(audio_file.name, audio_file.read()),
-            model="whisper-large-v3",
-            response_format="text"
+            model="whisper-large-v3", response_format="text"
         )
-        user_prompt = transcription
         st.session_state.mic_key += 1
 
-# --- PROCESSAMENTO ---
-if user_prompt:
-    st.session_state.messages.append({"role": "user", "content": user_prompt})
+# --- PROCESSAMENTO INTELIGENTE ---
+if user_input:
+    st.session_state.messages.append({"role": "user", "content": user_input})
     
-    # Exibir chat (se não estiver em modo simultâneo limpo)
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    # Mostrar histórico
+    for m in st.session_state.messages:
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
 
     with st.chat_message("assistant"):
         placeholder = st.empty()
-        full_response = ""
+        full_res = ""
 
-        # System prompt dinâmico baseado no modo
-        sys_behavior = "Sê muito breve, como numa conversa de telefone." if st.session_state.hands_free else "És um assistente útil."
+        # 1. Lógica de Geração de Imagem
+        img_triggers = ["crie uma imagem", "gere uma foto", "desenhe", "faça um desenho"]
+        if any(t in user_input.lower() for t in img_triggers):
+            with st.spinner("🎨 Criando arte..."):
+                # Traduz prompt para inglês via Llama para melhor qualidade no Pollinations
+                traducao = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": f"Traduz para inglês apenas o objeto da imagem: {user_input}"}]
+                )
+                eng_p = urllib.parse.quote(traducao.choices[0].message.content)
+                img_url = f"https://image.pollinations.ai/prompt/{eng_p}?width=1024&height=1024&model=flux"
+                st.image(img_url, caption=user_input)
+                full_res = "Aqui está a imagem que você imaginou!"
+                placeholder.markdown(full_res)
+
+        # 2. Lógica de Visão (Se houver foto)
+        elif arquivo and arquivo.type.startswith("image"):
+            with st.spinner("👁️ Analisando imagem..."):
+                b64 = encode_img(arquivo)
+                res = client.chat.completions.create(
+                    model="llama-3.2-11b-vision-preview",
+                    messages=[{"role": "user", "content": [
+                        {"type": "text", "text": user_input},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                    ]}]
+                )
+                full_res = res.choices[0].message.content
+                placeholder.markdown(full_res)
+
+        # 3. Lógica de Texto / PDF
+        else:
+            ctx_pdf = ""
+            if arquivo and "pdf" in arquivo.type:
+                reader = PyPDF2.PdfReader(arquivo)
+                ctx_pdf = "Contexto PDF: " + "".join([p.extract_text() for p in reader.pages[:3]])
+
+            sys_p = f"Seja breve e direto. Use voz natural. {ctx_pdf}" if modo_voz else f"Assistente útil. {ctx_pdf}"
+            
+            stream = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "system", "content": sys_p}] + st.session_state.messages,
+                stream=True
+            )
+            for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content:
+                    full_res += content
+                    placeholder.markdown(full_res + "▌")
+            placeholder.markdown(full_res)
+
+        # Finalização: Salvar e Falar
+        st.session_state.messages.append({"role": "assistant", "content": full_res})
+        if modo_voz:
+            play_audio(full_res)
         
-        completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": sys_behavior}] + st.session_state.messages,
-            stream=True
-        )
-
-        for chunk in completion:
-            if chunk.choices[0].delta.content:
-                full_response += chunk.choices[0].delta.content
-                placeholder.markdown(full_response + "▌")
-        placeholder.markdown(full_response)
-
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
-    
-    # No modo simultâneo, o áudio é obrigatório e automático
-    if st.session_state.hands_free or st.session_state.get('auto_audio', True):
-        play_audio_auto(full_response)
-    
-    # Rerun para preparar o microfone
-    if audio_output:
-        st.rerun()
-
-elif not user_prompt and st.session_state.messages:
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+        if audio_in:
+            st.rerun()
